@@ -1,9 +1,4 @@
-# Python cache
 __pycache__/
 *.pyc
-
-# YOLO / ML model weights
 *.pt
-
-# Environment files
 .env
