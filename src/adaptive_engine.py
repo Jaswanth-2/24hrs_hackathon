@@ -1,7 +1,6 @@
 import cv2
 import time
 import math
-import numpy as np
 from ultralytics import YOLO
 import config
 
@@ -20,6 +19,8 @@ class AdaptiveVideoAnalytics:
         self.current_res = config.RES_HIGH
         self.bandwidth_level = 100 
         self.frame_count = 0
+        self.total_inferences = 0
+        self.heavy_inferences = 0
         
     def get_simulated_bandwidth(self):
  
@@ -28,7 +29,6 @@ class AdaptiveVideoAnalytics:
 
     def process_stream(self):
         prev_time = 0
-               
         frame_skip_interval = 3  
         last_results = None      
         
@@ -36,21 +36,21 @@ class AdaptiveVideoAnalytics:
             ret, frame = self.cap.read()
             if not ret: break
             self.frame_count += 1
-                    
+
             self.bandwidth_level = self.get_simulated_bandwidth()
-            
             if self.bandwidth_level < 40:
                 target_width = config.RES_LOW
             else:
                 target_width = config.RES_HIGH         
-         
             self.current_res = target_width 
-               
+                
             h, w = frame.shape[:2]
             scale = target_width / w
             frame_resized = cv2.resize(frame, (int(w * scale), int(h * scale)))
-   
+
             if self.frame_count % frame_skip_interval == 0:
+                
+                self.total_inferences += 1 
        
                 active_model = self.model_light
                 self.current_model_name = "YOLOv8n (Light)"
@@ -68,12 +68,13 @@ class AdaptiveVideoAnalytics:
                          low_conf = True
 
                 if self.bandwidth_level > 60 and (is_complex or low_conf):
-                    self.current_model_name = "YOLOv8s (Heavy)" 
+                    self.heavy_inferences += 1
+                    
+                    self.current_model_name = "YOLO11s (Heavy)" 
                     color_status = (0, 0, 255)
                     results = self.model_heavy(frame_resized, verbose=False)
-                              
+                             
                 last_results = results[0]               
-                
                 display_frame = results[0].plot()
                 
             else:
@@ -97,13 +98,16 @@ class AdaptiveVideoAnalytics:
 
             cv2.imshow('Auto-Adaptive Analytics', display_frame)
             if cv2.waitKey(1) & 0xFF == ord('q'): break
+
     def draw_hud(self, img, fps, objs, complex_scene, low_conf, color):
-        cv2.rectangle(img, (20, 20), (450, 280), (0, 0, 0), -1)
-        cv2.rectangle(img, (20, 20), (450, 280), (255, 255, 255), 2)
-        
+        # 1. Background (Made taller to fit the new bar)
+        cv2.rectangle(img, (20, 20), (450, 360), (0, 0, 0), -1)
+        cv2.rectangle(img, (20, 20), (450, 360), (255, 255, 255), 2)
+
         cv2.putText(img, f"Network Bandwidth: {self.bandwidth_level}%", (40, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         bar_color = (0, 255, 0) if self.bandwidth_level > 50 else (0, 0, 255)
         cv2.rectangle(img, (40, 75), (40 + self.bandwidth_level * 3, 95), bar_color, -1)
+        
         cv2.putText(img, f"Scene Objects: {objs}", (40, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
         if complex_scene:
             cv2.putText(img, "[!] COMPLEX SCENE DETECTED", (220, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
@@ -111,3 +115,14 @@ class AdaptiveVideoAnalytics:
         cv2.putText(img, f"Active Model: {self.current_model_name}", (40, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 3)
         cv2.putText(img, f"Resolution: {self.current_res}p", (40, 220), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         cv2.putText(img, f"FPS: {int(fps)}", (40, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+        if self.total_inferences > 0:
+            efficiency = ((self.total_inferences - self.heavy_inferences) / self.total_inferences) * 100
+        else:
+            efficiency = 100.0
+
+        cv2.putText(img, f"Green AI Efficiency: {int(efficiency)}%", (40, 310), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+        eff_width = int((efficiency / 100) * 300)
+        eff_color = (0, 255, 0) if efficiency > 75 else (0, 0, 255)
+        cv2.rectangle(img, (40, 325), (40 + eff_width, 345), eff_color, -1)
