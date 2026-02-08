@@ -11,44 +11,41 @@ import config
 
 class AdaptiveVideoAnalytics:
     def __init__(self, source=config.VIDEO_SOURCE):
-        print(f"Loading Light Model ({config.MODEL_LIGHT})...")
+        print("------------------------------------------------")
+        print("  SMART-STREAM AI   ")
+        print("------------------------------------------------")
+        
+        print(f"[LOAD] Loading Light Model ({config.MODEL_LIGHT})...")
         self.model_light = YOLO(config.MODEL_LIGHT)
 
-        print(f"Loading Heavy Model ({config.MODEL_HEAVY})...")
+        print(f"[LOAD] Loading Heavy Model ({config.MODEL_HEAVY})...")
         self.model_heavy = YOLO(config.MODEL_HEAVY)
 
-        print("Connecting to video source...")
+        print("[CONN] Connecting to video source...")
         self.cap = cv2.VideoCapture(source)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         if not self.cap.isOpened():
             raise RuntimeError("Cannot open video source")
 
-        # --- STATE VARIABLES ---
         self.current_model_name = "YOLOv8n (Light)"
         self.current_res = config.RES_HIGH
         self.bandwidth_level = 100 
         self.frame_count = 0
         
-        # --- START REAL-TIME NETWORK THREAD ---
         self.running = True
         self.network_thread = threading.Thread(target=self.monitor_network_realtime, daemon=True)
         self.network_thread.start()
+        print("[NET] Network Monitor Started (Background Thread)")
 
     def monitor_network_realtime(self):
-        """
-        Runs in background. Pings Google DNS (8.8.8.8) to measure 'Real' Health.
-        """
-        # Command depends on OS (Windows use -n, Linux/Mac use -c)
         param = '-n' if platform.system().lower() == 'windows' else '-c'
         command = ['ping', param, '1', '8.8.8.8'] 
 
         while self.running:
             try:
-                # Run ping command
                 output = subprocess.check_output(command, stderr=subprocess.STDOUT, universal_newlines=True)
                 
-                # Extract time using Regex
                 if platform.system().lower() == 'windows':
                     match = re.search(r"time=(\d+)", output)
                 else:
@@ -56,8 +53,6 @@ class AdaptiveVideoAnalytics:
 
                 if match:
                     latency = float(match.group(1))
-                    
-                    # LOGIC: < 50ms = 100%, > 500ms = 10%
                     if latency < 20: self.bandwidth_level = 100
                     elif latency < 50: self.bandwidth_level = 90
                     elif latency < 100: self.bandwidth_level = 75
@@ -65,30 +60,81 @@ class AdaptiveVideoAnalytics:
                     elif latency < 500: self.bandwidth_level = 30
                     else: self.bandwidth_level = 10
                 else:
-                    self.bandwidth_level = 0 # Timeout
-                    
+                    self.bandwidth_level = 0 
             except Exception:
-                self.bandwidth_level = 0 # No Internet
+                self.bandwidth_level = 0 
             
-            # Check every 1 second
-            time.sleep(1)
+            time.sleep(1) 
+
+    def draw_tech_box(self, img, x1, y1, x2, y2, color, label, confidence):
+        line_len = int((x2 - x1) * 0.2)
+        thickness = 2
+        
+        cv2.line(img, (x1, y1), (x1 + line_len, y1), color, thickness)
+        cv2.line(img, (x1, y1), (x1, y1 + line_len), color, thickness)
+        cv2.line(img, (x2, y1), (x2 - line_len, y1), color, thickness)
+        cv2.line(img, (x2, y1), (x2, y1 + line_len), color, thickness)
+        cv2.line(img, (x1, y2), (x1 + line_len, y2), color, thickness)
+        cv2.line(img, (x1, y2), (x1, y2 - line_len), color, thickness)
+        cv2.line(img, (x2, y2), (x2 - line_len, y2), color, thickness)
+        cv2.line(img, (x2, y2), (x2, y2 - line_len), color, thickness)
+        
+        (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        cv2.rectangle(img, (x1, y1 - 20), (x1 + w + 10, y1), color, -1)
+        cv2.putText(img, f"{label} {int(confidence*100)}%", (x1 + 5, y1 - 5), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1, cv2.LINE_AA)
+
+    def draw_sci_fi_hud(self, frame, fps, objs, is_complex, model_name, res, bw_level):
+        h, w = frame.shape[:2]
+        
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, 0), (280, h), (10, 10, 10), -1)
+        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+        
+        cv2.putText(frame, "SMART-STREAM", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+        cv2.line(frame, (20, 50), (260, 50), (0, 255, 255), 2)
+        
+        y = 100
+        cyan = (255, 255, 0)
+        white = (220, 220, 220)
+        
+        cv2.putText(frame, f"NETWORK: {bw_level}%", (20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, cyan, 1)
+        cv2.rectangle(frame, (20, y+10), (240, y+25), (50, 50, 50), -1)
+        
+        bar_w = int(220 * (bw_level / 100))
+        bar_col = (0, 255, 0) if bw_level > 50 else (0, 0, 255)
+        cv2.rectangle(frame, (20, y+10), (20 + bar_w, y+25), bar_col, -1)
+        
+        y += 60
+        cv2.putText(frame, "AI INFERENCE ENGINE", (20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, cyan, 1)
+        cv2.putText(frame, f">> {model_name}", (20, y+25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, white, 1)
+        
+        y += 60
+        cv2.putText(frame, "LIVE ANALYTICS", (20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, cyan, 1)
+        cv2.putText(frame, f"FPS: {int(fps)}", (20, y+25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, white, 1)
+        cv2.putText(frame, f"RES: {res}p", (140, y+25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, white, 1)
+        cv2.putText(frame, f"OBJS: {objs}", (20, y+50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, white, 1)
+
+        if is_complex:
+             cv2.rectangle(frame, (20, y+70), (240, y+110), (0, 0, 255), -1)
+             cv2.putText(frame, "COMPLEX SCENE", (30, y+98), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
     def process_stream(self):
         prev_time = time.time()
         frame_skip_interval = 3
         last_results = None
-
+        
+        num_objects = 0
+        is_complex = False
+        
         while True:
             ret, frame = self.cap.read()
             if not ret:
-                print("Frame not received")
+                print("Frame not received. Exiting...")
                 break
 
             self.frame_count += 1
             
-            # NOTE: self.bandwidth_level is now updated automatically by the thread!
-
-            # --- ADAPTIVE RESOLUTION LOGIC ---
             target_width = config.RES_LOW if self.bandwidth_level < 40 else config.RES_HIGH
             self.current_res = target_width
 
@@ -98,88 +144,55 @@ class AdaptiveVideoAnalytics:
 
             if self.frame_count % frame_skip_interval == 0:
                 self.current_model_name = "YOLOv8n (Light)"
-                color_status = (0, 255, 255)
-
+                
                 results = self.model_light(frame_resized, verbose=False)
                 boxes = results[0].boxes
                 num_objects = len(boxes)
                 
                 is_complex = num_objects > config.COMPLEXITY_THRESHOLD
                 low_conf = False
-
                 if num_objects > 0 and boxes.conf.min().item() < config.CONFIDENCE_THRESHOLD:
                     low_conf = True
 
-                # --- MODEL SWITCHING LOGIC ---
                 if self.bandwidth_level > 60 and (is_complex or low_conf):
-                    self.current_model_name = "YOLOv8s (Heavy)"
-                    color_status = (0, 0, 255)
+                    self.current_model_name = "YOLOv11s (Heavy)"
                     results = self.model_heavy(frame_resized, verbose=False)
 
                 last_results = results[0]
-                display_frame = results[0].plot()
+            
+            display_frame = frame_resized.copy()
+            
+            if last_results is not None:
+                for box in last_results.boxes:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    conf = float(box.conf[0])
+                    cls = int(box.cls[0])
+                    
+                    label = self.model_light.names[cls] if hasattr(self.model_light, 'names') else "Object"
 
-            else:
-                if last_results is not None:
-                    display_frame = last_results.plot(img=frame_resized)
-                else:
-                    display_frame = frame_resized
+                    color = (255, 255, 0) 
+                    if self.current_model_name == "YOLOv8s (Heavy)":
+                        color = (0, 0, 255)
+                    
+                    self.draw_tech_box(display_frame, x1, y1, x2, y2, color, label, conf)
 
-            display_frame = cv2.resize(display_frame, (1080, 720))
+            display_frame = cv2.resize(display_frame, (1280, 720))
 
-            # FPS Calculation
             curr_time = time.time()
             fps = 1 / (curr_time - prev_time) if curr_time != prev_time else 0
             prev_time = curr_time
 
-            # Use locals().get to prevent crashes on startup
-            self.draw_hud(
-                display_frame, fps,
-                locals().get('num_objects', 0),
-                locals().get('is_complex', False),
-                locals().get('low_conf', False),
-                locals().get('color_status', (0, 255, 0))
-            )
+            self.draw_sci_fi_hud(display_frame, fps, num_objects, is_complex, 
+                               self.current_model_name, self.current_res, self.bandwidth_level)
 
-            cv2.imshow("Real-Time Adaptive Analytics", display_frame)
+            cv2.imshow("SmartStream AI // TERMINAL", display_frame)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
-                self.running = False # Stop the thread safely
+                self.running = False
                 break
 
         self.cap.release()
         cv2.destroyAllWindows()
-
-    def draw_hud(self, img, fps, objs, complex_scene, low_conf, color):
-        cv2.rectangle(img, (20, 20), (460, 290), (0, 0, 0), -1)
-        cv2.rectangle(img, (20, 20), (460, 290), (255, 255, 255), 2)
-
-        cv2.putText(img, f"Bandwidth: {self.bandwidth_level}%", (40, 60),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-        bar_color = (0, 255, 0) if self.bandwidth_level > 50 else (0, 0, 255)
-        cv2.rectangle(img, (40, 75), (40 + self.bandwidth_level * 3, 95), bar_color, -1)
-
-        cv2.putText(img, f"Objects: {objs}", (40, 130),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
-
-        if complex_scene:
-            cv2.putText(img, "COMPLEX SCENE", (200, 130),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
-
-        if low_conf:
-            cv2.putText(img, "LOW CONFIDENCE", (40, 165),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-
-        cv2.putText(img, f"Model: {self.current_model_name}", (40, 210),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 3)
-
-        cv2.putText(img, f"Resolution: {self.current_res}p", (40, 245),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-        cv2.putText(img, f"FPS: {int(fps)}", (40, 275),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
 
 if __name__ == "__main__":
     app = AdaptiveVideoAnalytics()
